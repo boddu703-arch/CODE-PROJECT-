@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campus Navigation System</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, Segoe UI, Arial, sans-serif; background: #f1f5f9; color: #0f172a; }
+  header { background: linear-gradient(90deg, #2563eb, #0d9488); color: #fff; padding: 18px 24px; }
+  header h1 { margin: 0; font-size: 1.4rem; }
+  header p { margin: 4px 0 0; opacity: .9; font-size: .9rem; }
+  main { display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
+  .card { background: #fff; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.08); padding: 16px; }
+  #panel { width: 300px; flex: 0 0 300px; }
+  #mapbox { flex: 1; min-width: 300px; }
+  label { display: block; font-size: .8rem; font-weight: 600; margin: 10px 0 4px; color: #475569; }
+  select, button { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: .95rem; }
+  button { cursor: pointer; border: 0; color: #fff; font-weight: 600; margin-top: 12px; background: #2563eb; }
+  button.alt { background: #64748b; margin-top: 8px; }
+  button:hover { filter: brightness(1.1); }
+  #result { margin-top: 16px; font-size: .9rem; }
+  .total { background: #ecfdf5; border-radius: 8px; padding: 10px; margin-bottom: 10px; font-weight: 600; color: #065f46; }
+  ol { padding-left: 20px; margin: 0; }
+  li { margin-bottom: 6px; }
+  li span { color: #64748b; }
+  svg { width: 100%; height: auto; background: #ecfdf5; border-radius: 10px; }
+  .edge { stroke: #94a3b8; stroke-width: 3; }
+  .edge-label { font-size: 11px; fill: #64748b; }
+  .path { stroke: #f97316; stroke-width: 7; fill: none; stroke-linecap: round; stroke-linejoin: round;
+          stroke-dasharray: 12 10; animation: flow 1s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -22; } }
+  .node circle { fill: #2563eb; stroke: #fff; stroke-width: 3; transition: r .2s, fill .2s; }
+  .node text { font-size: 12px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+  .node.on circle { fill: #f97316; r: 13; }
+  .node.start circle { fill: #16a34a; r: 15; }
+  .node.end circle { fill: #dc2626; r: 15; }
+  .node { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Campus Navigation System</h1>
+  <p>Find the shortest walking route between two buildings.</p>
+</header>
+<main>
+  <section class="card" id="panel">
+    <label for="from">Start</label>
+    <select id="from"></select>
+    <label for="to">Destination</label>
+    <select id="to"></select>
+    <button id="go">Find Route</button>
+    <button id="swap" class="alt">Swap</button>
+    <div id="result"></div>
+  </section>
+  <section class="card" id="mapbox">
+    <svg id="map" viewBox="0 0 900 520"></svg>
+  </section>
+</main>
+
+<script>
+const nodes = {
+  "Main Gate": [70, 270], "Library": [210, 140], "Medical Center": [210, 400],
+  "Science Block": [380, 140], "Innovation Lab": [380, 400], "Engineering Hall": [490, 270],
+  "Admin Block": [600, 110], "Cafeteria": [570, 440], "Student Center": [740, 270],
+  "Auditorium": [720, 450], "Sports Complex": [840, 130], "Residence Hall": [850, 380]
+};
+
+const walkways = [
+  ["Library", "Science Block", 130], ["Science Block", "Admin Block", 110],
+  ["Admin Block", "Student Center", 190], ["Student Center", "Sports Complex", 260],
+  ["Main Gate", "Library", 180], ["Main Gate", "Medical Center", 210],
+  ["Medical Center", "Library", 155], ["Medical Center", "Innovation Lab", 245],
+  ["Innovation Lab", "Science Block", 175], ["Innovation Lab", "Engineering Hall", 205],
+  ["Engineering Hall", "Science Block", 150], ["Engineering Hall", "Admin Block", 220],
+  ["Admin Block", "Cafeteria", 240], ["Cafeteria", "Student Center", 205],
+  ["Cafeteria", "Auditorium", 215], ["Auditorium", "Student Center", 165],
+  ["Auditorium", "Residence Hall", 235], ["Residence Hall", "Sports Complex", 155]
+];
+
+const WALK_SPEED = 80; // meters per minute
+
+// build graph
+const graph = {};
+Object.keys(nodes).forEach(n => graph[n] = {});
+walkways.forEach(([a, b, d]) => { graph[a][b] = d; graph[b][a] = d; });
+
+// Dijkstra (simple version, graph is small)
+function shortestPath(start, end) {
+  const dist = {}, prev = {}, todo = new Set(Object.keys(graph));
+  todo.forEach(n => dist[n] = Infinity);
+  dist[start] = 0;
+  while (todo.size) {
+    let cur = null;
+    todo.forEach(n => { if (cur === null || dist[n] < dist[cur]) cur = n; });
+    if (dist[cur] === Infinity || cur === end) break;
+    todo.delete(cur);
+    for (const nb in graph[cur]) {
+      const alt = dist[cur] + graph[cur][nb];
+      if (alt < dist[nb]) { dist[nb] = alt; prev[nb] = cur; }
+    }
+  }
+  if (dist[end] === Infinity) return null;
+  const route = [end];
+  while (route[0] !== start) route.unshift(prev[route[0]]);
+  return { route, total: dist[end] };
+}
+
+// draw map
+const svg = document.getElementById("map");
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+
+walkways.forEach(([a, b, d]) => {
+  const [x1, y1] = nodes[a], [x2, y2] = nodes[b];
+  el("line", { class: "edge", x1, y1, x2, y2 });
+  const t = el("text", { class: "edge-label", x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 6, "text-anchor": "middle" });
+  t.textContent = d + " m";
+});
+
+const pathLayer = el("g", {});
+const nodeEls = {};
+Object.entries(nodes).forEach(([name, [x, y]]) => {
+  const g = el("g", { class: "node" });
+  el("circle", { cx: x, cy: y, r: 11 }, g);
+  const t = el("text", { x, y: y + 28 }, g);
+  t.textContent = name;
+  g.addEventListener("click", () => pick(name));
+  nodeEls[name] = g;
+});
+
+// UI
+const fromSel = document.getElementById("from");
+const toSel = document.getElementById("to");
+Object.keys(nodes).sort().forEach(n => {
+  fromSel.add(new Option(n, n));
+  toSel.add(new Option(n, n));
+});
+fromSel.value = "Main Gate";
+toSel.value = "Sports Complex";
+
+let clickStep = 0; // click on map: first sets start, second sets destination
+function pick(name) {
+  if (clickStep === 0) fromSel.value = name; else { toSel.value = name; findRoute(); }
+  clickStep = 1 - clickStep;
+}
+
+function findRoute() {
+  const s = fromSel.value, e = toSel.value;
+  const out = document.getElementById("result");
+  pathLayer.innerHTML = "";
+  Object.values(nodeEls).forEach(n => n.setAttribute("class", "node"));
+
+  if (s === e) { out.innerHTML = "<div class='total'>You are already there.</div>"; return; }
+  const res = shortestPath(s, e);
+  if (!res) { out.textContent = "No route found."; return; }
+
+  const pts = res.route.map(n => nodes[n].join(",")).join(" ");
+  el("polyline", { class: "path", points: pts }, pathLayer);
+  res.route.forEach(n => nodeEls[n].classList.add("on"));
+  nodeEls[s].setAttribute("class", "node start");
+  nodeEls[e].setAttribute("class", "node end");
+
+  let steps = "";
+  for (let i = 0; i < res.route.length - 1; i++) {
+    const a = res.route[i], b = res.route[i + 1];
+    steps += `<li>${a} → ${b} <span>(${graph[a][b]} m)</span></li>`;
+  }
+  out.innerHTML =
+    `<div class="total">${res.total} m · about ${(res.total / WALK_SPEED).toFixed(1)} min walk</div><ol>${steps}</ol>`;
+}
+
+document.getElementById("go").onclick = findRoute;
+document.getElementById("swap").onclick = () => {
+  [fromSel.value, toSel.value] = [toSel.value, fromSel.value];
+  findRoute();
+};
+
+findRoute(); // show a sample route on load
+</script>
+</body>
+</html>
